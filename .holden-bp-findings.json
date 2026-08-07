@@ -1,0 +1,83 @@
+{
+  "scan_date": "2026-08-07T00:00:00Z",
+  "scan_path": ". example/examplea",
+  "findings": [
+    {
+      "id": "HOLDEN_BP_001",
+      "status": "fixed",
+      "first_seen": "2026-08-07",
+      "last_seen": "2026-08-07",
+      "principle": "reliability",
+      "severity": "LOW",
+      "confidence": "high",
+      "title": "Cloud Run service has no min_instance_count — scales to zero, causing cold starts",
+      "file": "google_cloud_run_v2_service.target.tf",
+      "line": 10,
+      "resource": "google_cloud_run_v2_service.target",
+      "explanation": "template.scaling is absent entirely, so Cloud Run defaults min_instance_count to 0. Every request after an idle period pays a cold-start penalty (image pull already avoided by min instances, but container init, CMEK-encrypted image decrypt, and app startup still run). For an Eventarc-triggered handler this may be acceptable, but the choice is currently implicit rather than a deliberate, documented module decision.",
+      "remediation": "Add a scaling block with an explicit min_instance_count, exposed as a variable defaulting to 0 so behavior is unchanged unless a caller opts in:\n\n  template {\n    scaling {\n      min_instance_count = var.min_instance_count\n      max_instance_count = var.max_instance_count\n    }\n  }",
+      "fixable": true,
+      "fix": "variables.tf: add\n\nvariable \"min_instance_count\" {\n  type        = number\n  description = \"Minimum number of warm Cloud Run instances (0 allows scale-to-zero)\"\n  default     = 0\n\n  validation {\n    condition     = var.min_instance_count >= 0\n    error_message = \"var.min_instance_count must be >= 0\"\n  }\n}\n\ngoogle_cloud_run_v2_service.target.tf: inside the template block, add\n\n    scaling {\n      min_instance_count = var.min_instance_count\n    }"
+    },
+    {
+      "id": "HOLDEN_BP_002",
+      "status": "open",
+      "first_seen": "2026-08-07",
+      "last_seen": "2026-08-07",
+      "principle": "cost",
+      "severity": "LOW",
+      "confidence": "medium",
+      "title": "Cloud Run service has no max_instance_count — scale-out is unbounded",
+      "file": "google_cloud_run_v2_service.target.tf",
+      "line": 10,
+      "resource": "google_cloud_run_v2_service.target",
+      "explanation": "With template.scaling.max_instance_count unset, Cloud Run caps concurrency only by the project's regional container-instance quota, not by an intentional ceiling. A retry storm, a misbehaving upstream publisher, or a burst of Cloud Storage events could scale this service far past what the workload actually needs, and the first signal would be the bill rather than an alert. This is a judgment call on what cap is appropriate for the workload, so it's reported rather than auto-fixed with a guessed number.",
+      "remediation": "Add an explicit max_instance_count sized to the expected peak load and budget, e.g.:\n\n  template {\n    scaling {\n      max_instance_count = var.max_instance_count  # pick a number appropriate to this workload's traffic and budget\n    }\n  }",
+      "fixable": false
+    },
+    {
+      "id": "HOLDEN_BP_003",
+      "status": "open",
+      "first_seen": "2026-08-07",
+      "last_seen": "2026-08-07",
+      "principle": "reliability",
+      "severity": "MEDIUM",
+      "confidence": "medium",
+      "title": "Cloud Run container has no startup_probe or liveness_probe",
+      "file": "google_cloud_run_v2_service.target.tf",
+      "line": 22,
+      "resource": "google_cloud_run_v2_service.target",
+      "explanation": "The containers block has no startup_probe or liveness_probe. Cloud Run's default readiness signal is just \"the container process is running and listening,\" which doesn't distinguish a container that's up but not actually ready to serve (e.g. still initializing a connection pool) from one that's fully healthy, and gives no ongoing liveness signal if the process hangs post-startup without exiting. Impact depends on how sensitive this workload is to serving from a not-yet-ready instance — for a synchronous API this can mean failed requests during every rollout; for an async event handler it's a smaller window. Not auto-fixed because the right probe path/port depends on what the actual container image exposes (the current default image is a placeholder), and a wrong guess could break deployment.",
+      "remediation": "Add explicit probes once a real container image is wired in, e.g.:\n\n  containers {\n    startup_probe {\n      http_get {\n        path = \"/healthz\"\n      }\n      initial_delay_seconds = 0\n      period_seconds        = 3\n      failure_threshold     = 3\n    }\n    liveness_probe {\n      http_get {\n        path = \"/healthz\"\n      }\n      period_seconds = 10\n    }\n  }",
+      "fixable": false
+    },
+    {
+      "id": "HOLDEN_BP_004",
+      "status": "fixed",
+      "first_seen": "2026-08-07",
+      "last_seen": "2026-08-07",
+      "principle": "maintainability",
+      "severity": "LOW",
+      "confidence": "high",
+      "title": "Eventarc trigger name and its service account's account_id are hardcoded, unlike every other identifier in the module",
+      "file": "google_eventarc_trigger.main.tf",
+      "line": 2,
+      "resource": "google_eventarc_trigger.main",
+      "related_resources": ["google_service_account.eventarc.tf"],
+      "explanation": "Every other named resource in this module derives its name from a variable (run_service_name feeds the Cloud Run service, its SA, and the uptime check's display_name), but google_eventarc_trigger.main.name is the literal \"storage-trigger\" and google_service_account.eventarc.account_id is the literal \"eventarc-trigger\". Both are project-scoped-unique names in GCP, so instantiating this module twice in the same project (two different Cloud Run services triggered by two different buckets, which the module otherwise fully supports via run_service_name/source_bucket_name) fails at apply time on a duplicate trigger name or duplicate service account collision — the one hardcoded pair breaks the module's own multi-instance story.",
+      "remediation": "Parameterize both, defaulting to the current literals so existing callers see no behavior change:\n\nvariable \"trigger_name\" {\n  type        = string\n  description = \"Name of the Eventarc trigger\"\n  default     = \"storage-trigger\"\n}\n\nvariable \"eventarc_service_account_id\" {\n  type        = string\n  description = \"account_id for the Eventarc trigger's service account\"\n  default     = \"eventarc-trigger\"\n}\n\nThen reference var.trigger_name and var.eventarc_service_account_id in place of the literals.",
+      "fixable": true,
+      "fix": "variables.tf: add\n\nvariable \"trigger_name\" {\n  type        = string\n  description = \"Name of the Eventarc trigger\"\n  default     = \"storage-trigger\"\n\n  validation {\n    condition     = length(trimspace(var.trigger_name)) > 0\n    error_message = \"var.trigger_name must be a non-empty string\"\n  }\n}\n\nvariable \"eventarc_service_account_id\" {\n  type        = string\n  description = \"account_id for the Eventarc trigger's service account\"\n  default     = \"eventarc-trigger\"\n\n  validation {\n    condition     = length(trimspace(var.eventarc_service_account_id)) > 0\n    error_message = \"var.eventarc_service_account_id must be a non-empty string\"\n  }\n}\n\ngoogle_eventarc_trigger.main.tf: change `name = \"storage-trigger\"` to `name = var.trigger_name`\n\ngoogle_service_account.eventarc.tf: change `account_id = \"eventarc-trigger\"` to `account_id = var.eventarc_service_account_id`"
+    }
+  ],
+  "suggested_policies": [
+    {
+      "rationale": "google_cloud_run_v2_service has 13 existing policies covering resource limits (HLD_GCP_331) and timeout (HLD_GCP_332) with exactly this pattern — an explicit-configuration requirement even though a sane default exists — but nothing about template.scaling.min_instance_count. Concrete, single-resource, single-attribute, not_null check; generalizes to any Cloud Run v2 service.",
+      "yaml": "id: HLD_GCP_480\nname: Cloud Run v2 services should define a minimum instance count\nprinciple: reliability\nseverity: LOW\nrationale: |\n  Without an explicit template.scaling.min_instance_count, Cloud Run\n  defaults to 0 (scale-to-zero). Every request after an idle period pays a\n  cold-start penalty. This may be an intentional and reasonable choice for\n  many workloads, but leaving it unset makes the choice implicit rather\n  than a documented decision the module's author actually made.\nremediation: |\n  Add a scaling block with an explicit min_instance_count:\n\n    template {\n      scaling {\n        min_instance_count = 0  # or higher to keep instances warm\n      }\n    }\nresources:\n  google_cloud_run_v2_service:\n    path: template.scaling.min_instance_count\n    not_null: true\n"
+    },
+    {
+      "rationale": "Same coverage gap as above but for the cost side: template.scaling.max_instance_count is unset by default, which means scale-out is bounded only by project quota, not by an intentional ceiling. Concrete, single-resource, single-attribute check.",
+      "yaml": "id: HLD_GCP_481\nname: Cloud Run v2 services should define a maximum instance count\nprinciple: cost\nseverity: LOW\nrationale: |\n  Without an explicit template.scaling.max_instance_count, Cloud Run caps\n  concurrency only by the project's regional container-instance quota, not\n  by an intentional ceiling. A retry storm or a burst of upstream events\n  can scale the service far past what the workload needs, with the first\n  signal being the bill rather than an alert.\nremediation: |\n  Add a scaling block with an explicit max_instance_count sized to the\n  workload's expected peak load and budget:\n\n    template {\n      scaling {\n        max_instance_count = 10  # size to this workload's traffic and budget\n      }\n    }\nresources:\n  google_cloud_run_v2_service:\n    path: template.scaling.max_instance_count\n    not_null: true\n"
+    }
+  ]
+}

@@ -1,0 +1,42 @@
+id: HLD_GCP_478
+name: Eventarc Cloud Storage triggers must scope events to a specific bucket
+principle: governance
+severity: MEDIUM
+rationale: |
+  Cloud Storage direct-event Eventarc triggers (matching_criteria attribute
+  "type" equal to google.cloud.storage.object.v1.finalized) require a
+  companion matching_criteria with attribute "bucket" to scope which
+  bucket's notifications are delivered. Google's own Terraform
+  documentation for creating these triggers always pairs the type
+  criteria with a bucket criteria. Without it, the trigger either fails
+  Eventarc's server-side validation, or — if accepted — matches
+  object-finalized events for every bucket in the project, including
+  buckets created later and outside this module's control, silently
+  expanding the blast radius of what invokes the trigger's destination.
+remediation: |
+  Add a bucket-scoped matching_criteria block:
+
+    resource "google_eventarc_trigger" "storage" {
+      matching_criteria {
+        attribute = "type"
+        value     = "google.cloud.storage.object.v1.finalized"
+      }
+      matching_criteria {
+        attribute = "bucket"
+        value     = google_storage_bucket.source.name
+      }
+    }
+resources:
+  google_eventarc_trigger:
+    filter:
+      path: matching_criteria
+      any_in:
+        all:
+          - path: attribute
+            equals: "type"
+          - path: value
+            equals: "google.cloud.storage.object.v1.finalized"
+    path: matching_criteria
+    any_in:
+      path: attribute
+      equals: "bucket"

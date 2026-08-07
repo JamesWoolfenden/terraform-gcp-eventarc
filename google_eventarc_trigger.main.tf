@@ -1,5 +1,5 @@
 resource "google_eventarc_trigger" "main" {
-  name            = "storage-trigger"
+  name            = var.trigger_name
   project         = var.project_id
   location        = var.location
   service_account = google_service_account.eventarc.email
@@ -7,6 +7,11 @@ resource "google_eventarc_trigger" "main" {
   matching_criteria {
     attribute = "type"
     value     = "google.cloud.storage.object.v1.finalized"
+  }
+
+  matching_criteria {
+    attribute = "bucket"
+    value     = var.source_bucket_name
   }
 
   destination {
