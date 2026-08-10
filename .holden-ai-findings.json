@@ -1,94 +1,100 @@
 {
-  "scan_date": "2026-08-07T00:00:00Z",
-  "scan_path": ". example/examplea",
   "findings": [
     {
+      "confidence": "high",
+      "explanation": "The trigger's only matching_criteria is attribute=\"type\" for google.cloud.storage.object.v1.finalized. Google's own Terraform documentation for Cloud Storage direct-event triggers (docs.cloud.google.com/eventarc/docs/creating-triggers-terraform) always pairs that with a second matching_criteria block, attribute=\"bucket\", to scope which bucket's notifications are delivered \u2014 every worked example includes it. There is no bucket variable or resource anywhere in this module, so the trigger either fails Eventarc's server-side validation on apply, or \u2014 if accepted \u2014 fires for object-finalized events in every bucket in the project, including buckets created later that this module has no relationship to. Holden's deterministic engine has no rule for this because the fix requires knowing that this specific matching_criteria pairing is conventionally mandatory for this event type, which isn't a generic attribute-presence check on a single resource in isolation \u2014 but it is now (see suggested_policies).",
+      "file": "google_eventarc_trigger.main.tf",
+      "first_seen": "2026-08-07",
+      "fix": "variables.tf: add\n\nvariable \"source_bucket_name\" {\n  type        = string\n  description = \"Name of the Cloud Storage bucket whose finalized-object events trigger this Eventarc pipeline\"\n\n  validation {\n    condition     = length(trimspace(var.source_bucket_name)) > 0\n    error_message = \"var.source_bucket_name must be a non-empty string\"\n  }\n}\n\ngoogle_eventarc_trigger.main.tf: inside resource \"google_eventarc_trigger\" \"main\", after the existing matching_criteria block, add\n\n  matching_criteria {\n    attribute = \"bucket\"\n    value     = var.source_bucket_name\n  }",
+      "fixable": true,
       "id": "HOLDEN_AI_001",
-      "status": "fixed",
-      "first_seen": "2026-08-07",
       "last_seen": "2026-08-07",
-      "suppression_reason": null,
-      "principle": "governance",
-      "severity": "HIGH",
-      "confidence": "high",
-      "title": "Eventarc trigger has no bucket scope — matches Cloud Storage events project-wide, not just the intended bucket",
-      "file": "google_eventarc_trigger.main.tf",
       "line": 7,
-      "resource": "google_eventarc_trigger.main",
-      "related_resources": ["variables.tf"],
-      "explanation": "The trigger's only matching_criteria is attribute=\"type\" for google.cloud.storage.object.v1.finalized. Google's own Terraform documentation for Cloud Storage direct-event triggers (docs.cloud.google.com/eventarc/docs/creating-triggers-terraform) always pairs that with a second matching_criteria block, attribute=\"bucket\", to scope which bucket's notifications are delivered — every worked example includes it. There is no bucket variable or resource anywhere in this module, so the trigger either fails Eventarc's server-side validation on apply, or — if accepted — fires for object-finalized events in every bucket in the project, including buckets created later that this module has no relationship to. Holden's deterministic engine has no rule for this because the fix requires knowing that this specific matching_criteria pairing is conventionally mandatory for this event type, which isn't a generic attribute-presence check on a single resource in isolation — but it is now (see suggested_policies).",
+      "principle": "governance",
+      "related_resources": [
+        "variables.tf"
+      ],
       "remediation": "Add a required variable for the source bucket and a companion matching_criteria block:\n\nvariable \"source_bucket_name\" {\n  type        = string\n  description = \"Name of the Cloud Storage bucket whose finalized-object events trigger this Eventarc pipeline\"\n\n  validation {\n    condition     = length(trimspace(var.source_bucket_name)) > 0\n    error_message = \"var.source_bucket_name must be a non-empty string\"\n  }\n}\n\n# in google_eventarc_trigger.main.tf, inside the resource block:\n  matching_criteria {\n    attribute = \"bucket\"\n    value     = var.source_bucket_name\n  }",
-      "fixable": true,
-      "fix": "variables.tf: add\n\nvariable \"source_bucket_name\" {\n  type        = string\n  description = \"Name of the Cloud Storage bucket whose finalized-object events trigger this Eventarc pipeline\"\n\n  validation {\n    condition     = length(trimspace(var.source_bucket_name)) > 0\n    error_message = \"var.source_bucket_name must be a non-empty string\"\n  }\n}\n\ngoogle_eventarc_trigger.main.tf: inside resource \"google_eventarc_trigger\" \"main\", after the existing matching_criteria block, add\n\n  matching_criteria {\n    attribute = \"bucket\"\n    value     = var.source_bucket_name\n  }"
-    },
-    {
-      "id": "HOLDEN_AI_002",
-      "status": "fixed",
-      "first_seen": "2026-08-07",
-      "last_seen": "2026-08-07",
-      "suppression_reason": null,
-      "principle": "identity-and-access",
-      "severity": "HIGH",
-      "confidence": "high",
-      "title": "Cloud Storage service agent is never granted roles/pubsub.publisher — the trigger's underlying Pub/Sub delivery path is unauthorized",
-      "file": "google_eventarc_trigger.main.tf",
-      "line": 1,
       "resource": "google_eventarc_trigger.main",
-      "related_resources": ["google_kms_crypto_key_iam_member.run_cmek.tf"],
-      "explanation": "Eventarc Standard delivers direct Cloud Storage events through an Eventarc-managed Pub/Sub topic that Cloud Storage's own per-project service agent (service-PROJECT_NUMBER@gs-project-accounts.iam.gserviceaccount.com) must be allowed to publish to. Google's Terraform documentation for this exact setup requires a `google_project_iam_member` granting that service agent roles/pubsub.publisher (using the `google_storage_project_service_account` data source) as a named prerequisite step. Nothing in this repo grants it — this module already does the equivalent grant correctly for the *other* implicit platform identity (the Cloud Run service agent's CMEK grant in google_kms_crypto_key_iam_member.run_cmek.tf), so the pattern is understood here, just not applied to this second, unrelated implicit identity. Without it, GCS notifications for the finalized event are silently undeliverable and this Eventarc pipeline never fires.",
-      "remediation": "data \"google_storage_project_service_account\" \"gcs_account\" {}\n\nresource \"google_project_iam_member\" \"gcs_pubsub_publisher\" {\n  project = var.project_id\n  role    = \"roles/pubsub.publisher\"\n  member  = \"serviceAccount:${data.google_storage_project_service_account.gcs_account.email_address}\"\n}",
+      "severity": "HIGH",
+      "status": "fixed",
+      "suppression_reason": null,
+      "title": "Eventarc trigger has no bucket scope \u2014 matches Cloud Storage events project-wide, not just the intended bucket"
+    },
+    {
+      "confidence": "high",
+      "explanation": "Eventarc Standard delivers direct Cloud Storage events through an Eventarc-managed Pub/Sub topic that Cloud Storage's own per-project service agent (service-PROJECT_NUMBER@gs-project-accounts.iam.gserviceaccount.com) must be allowed to publish to. Google's Terraform documentation for this exact setup requires a `google_project_iam_member` granting that service agent roles/pubsub.publisher (using the `google_storage_project_service_account` data source) as a named prerequisite step. Nothing in this repo grants it \u2014 this module already does the equivalent grant correctly for the *other* implicit platform identity (the Cloud Run service agent's CMEK grant in google_kms_crypto_key_iam_member.run_cmek.tf), so the pattern is understood here, just not applied to this second, unrelated implicit identity. Without it, GCS notifications for the finalized event are silently undeliverable and this Eventarc pipeline never fires.",
+      "file": "google_eventarc_trigger.main.tf",
+      "first_seen": "2026-08-07",
+      "fix": "New file google_project_iam_member.gcs_pubsub_publisher.tf:\n\ndata \"google_storage_project_service_account\" \"gcs_account\" {}\n\nresource \"google_project_iam_member\" \"gcs_pubsub_publisher\" {\n  project = var.project_id\n  role    = \"roles/pubsub.publisher\"\n  member  = \"serviceAccount:${data.google_storage_project_service_account.gcs_account.email_address}\"\n}",
       "fixable": true,
-      "fix": "New file google_project_iam_member.gcs_pubsub_publisher.tf:\n\ndata \"google_storage_project_service_account\" \"gcs_account\" {}\n\nresource \"google_project_iam_member\" \"gcs_pubsub_publisher\" {\n  project = var.project_id\n  role    = \"roles/pubsub.publisher\"\n  member  = \"serviceAccount:${data.google_storage_project_service_account.gcs_account.email_address}\"\n}"
+      "id": "HOLDEN_AI_002",
+      "last_seen": "2026-08-07",
+      "line": 1,
+      "principle": "identity-and-access",
+      "related_resources": [
+        "google_kms_crypto_key_iam_member.run_cmek.tf"
+      ],
+      "remediation": "data \"google_storage_project_service_account\" \"gcs_account\" {}\n\nresource \"google_project_iam_member\" \"gcs_pubsub_publisher\" {\n  project = var.project_id\n  role    = \"roles/pubsub.publisher\"\n  member  = \"serviceAccount:${data.google_storage_project_service_account.gcs_account.email_address}\"\n}",
+      "resource": "google_eventarc_trigger.main",
+      "severity": "HIGH",
+      "status": "fixed",
+      "suppression_reason": null,
+      "title": "Cloud Storage service agent is never granted roles/pubsub.publisher \u2014 the trigger's underlying Pub/Sub delivery path is unauthorized"
     },
     {
-      "id": "HOLDEN_AI_003",
-      "status": "open",
-      "first_seen": "2026-08-07",
-      "last_seen": "2026-08-07",
-      "unresolved_since": "2026-08-07",
-      "suppression_reason": null,
-      "principle": "logging-and-monitoring",
-      "severity": "MEDIUM",
       "confidence": "medium",
-      "title": "Uptime check exists (satisfies HLD_GCP_336) but no alert policy is wired to it — a failure runs unnoticed",
+      "explanation": "google_monitoring_uptime_check_config.target checks the Cloud Run service every 60s over HTTPS, which is enough to satisfy holden's HLD_GCP_336 (\"Cloud Run services must have uptime check monitoring\"). But that rule only requires the check to exist \u2014 there is no google_monitoring_alert_policy anywhere in the repo referencing this check's condition, so a sustained outage produces monitoring data but pages nobody. This resource type has zero holden policy coverage at all (coverage_by_type[\"google_monitoring_uptime_check_config\"] is empty), and the missing link to an alert policy is a cross-resource, string-based relationship (an alert policy's condition.filter must reference this check's check_id) that the current DSL has no clean primitive for, so this is reported here rather than as a mechanical fix.",
       "file": "google_cloud_run_v2_service.target.tf",
+      "first_seen": "2026-08-07",
+      "fixable": false,
+      "id": "HOLDEN_AI_003",
+      "last_seen": "2026-08-07",
       "line": 45,
-      "resource": "google_monitoring_uptime_check_config.target",
+      "principle": "logging-and-monitoring",
       "related_resources": [],
-      "explanation": "google_monitoring_uptime_check_config.target checks the Cloud Run service every 60s over HTTPS, which is enough to satisfy holden's HLD_GCP_336 (\"Cloud Run services must have uptime check monitoring\"). But that rule only requires the check to exist — there is no google_monitoring_alert_policy anywhere in the repo referencing this check's condition, so a sustained outage produces monitoring data but pages nobody. This resource type has zero holden policy coverage at all (coverage_by_type[\"google_monitoring_uptime_check_config\"] is empty), and the missing link to an alert policy is a cross-resource, string-based relationship (an alert policy's condition.filter must reference this check's check_id) that the current DSL has no clean primitive for, so this is reported here rather than as a mechanical fix.",
-      "remediation": "Add a google_monitoring_alert_policy with a condition_threshold or condition_absent referencing this uptime check's id (via the check_id label filter), plus at least one notification_channels entry — or confirm alerting is intentionally handled by an external system outside this module and document that assumption.",
-      "fixable": false
+      "remediation": "Add a google_monitoring_alert_policy with a condition_threshold or condition_absent referencing this uptime check's id (via the check_id label filter), plus at least one notification_channels entry \u2014 or confirm alerting is intentionally handled by an external system outside this module and document that assumption.",
+      "resource": "google_monitoring_uptime_check_config.target",
+      "severity": "MEDIUM",
+      "status": "open",
+      "suppression_reason": null,
+      "title": "Uptime check exists (satisfies HLD_GCP_336) but no alert policy is wired to it \u2014 a failure runs unnoticed",
+      "unresolved_since": "2026-08-07"
     },
     {
-      "id": "HOLDEN_AI_004",
-      "status": "open",
-      "first_seen": "2026-08-07",
-      "last_seen": "2026-08-07",
-      "unresolved_since": "2026-08-07",
-      "suppression_reason": null,
-      "principle": "network-security",
-      "severity": "LOW",
       "confidence": "medium",
-      "title": "var.vpc_egress lets callers opt into ALL_TRAFFIC egress with no guardrail that the target network actually has Cloud NAT",
+      "explanation": "holden's HLD_GCP_291 (\"Cloud Run ALL_TRAFFIC VPC egress requires Cloud NAT on the target network\") exists precisely to catch this failure mode, but it can't fire here: egress is set to `var.vpc_egress`, an unresolved variable, and the subnetwork is `var.vpc_subnetwork`, an opaque string crossing the module boundary with no HCL edge to whatever network it belongs to. The default (PRIVATE_RANGES_ONLY) is safe, and this module's own example correctly pairs its subnetwork with Cloud Router + Cloud NAT \u2014 but nothing stops a future caller from passing `vpc_egress = \"ALL_TRAFFIC\"` with a subnetwork on a network that has no NAT, silently breaking all outbound internet traffic from the service (or, worse, succeeding via a default route to the internet gateway that bypasses logging/control). This is a module-boundary blind spot HLD_GCP_291 cannot see, not a bug in the current default.",
       "file": "variables.tf",
+      "first_seen": "2026-08-07",
+      "fixable": false,
+      "id": "HOLDEN_AI_004",
+      "last_seen": "2026-08-07",
       "line": 98,
-      "resource": "google_cloud_run_v2_service.target",
-      "related_resources": ["example/examplea/module.eventarc.tf"],
-      "explanation": "holden's HLD_GCP_291 (\"Cloud Run ALL_TRAFFIC VPC egress requires Cloud NAT on the target network\") exists precisely to catch this failure mode, but it can't fire here: egress is set to `var.vpc_egress`, an unresolved variable, and the subnetwork is `var.vpc_subnetwork`, an opaque string crossing the module boundary with no HCL edge to whatever network it belongs to. The default (PRIVATE_RANGES_ONLY) is safe, and this module's own example correctly pairs its subnetwork with Cloud Router + Cloud NAT — but nothing stops a future caller from passing `vpc_egress = \"ALL_TRAFFIC\"` with a subnetwork on a network that has no NAT, silently breaking all outbound internet traffic from the service (or, worse, succeeding via a default route to the internet gateway that bypasses logging/control). This is a module-boundary blind spot HLD_GCP_291 cannot see, not a bug in the current default.",
+      "principle": "network-security",
+      "related_resources": [
+        "example/examplea/module.eventarc.tf"
+      ],
       "remediation": "Tighten the variable description for vpc_egress to state the Cloud NAT precondition explicitly when ALL_TRAFFIC is chosen, e.g.: \"Egress setting for Cloud Run direct VPC access. ALL_TRAFFIC requires the target subnetwork's network to already have Cloud NAT (or another controlled internet egress path) configured by the caller.\" Consider also defaulting new callers toward PRIVATE_RANGES_ONLY-only usage unless they've confirmed NAT is present, since this module cannot verify it.",
-      "fixable": false
+      "resource": "google_cloud_run_v2_service.target",
+      "severity": "LOW",
+      "status": "open",
+      "suppression_reason": null,
+      "title": "var.vpc_egress lets callers opt into ALL_TRAFFIC egress with no guardrail that the target network actually has Cloud NAT",
+      "unresolved_since": "2026-08-07"
     }
   ],
+  "scan_date": "2026-08-07T00:00:00Z",
+  "scan_path": ". example/examplea",
   "suggested_policies": [
     {
       "rationale": "google_eventarc_trigger has zero holden coverage for Cloud Storage event scoping (coverage_by_type[\"google_eventarc_trigger\"] only lists HLD_GCP_297, the run.invoker check). The bucket-scoping requirement is fully expressible with the existing DSL (filter + any_in over the repeated matching_criteria block, entirely within one resource) and generalizes to any Terraform repo using this pattern, not just this one. Validated against holden's live schema with `holden validate-policy`, and confirmed to fire on a fail fixture (trigger with only the type criteria) and stay silent on a pass fixture (type + bucket criteria both present).",
-      "yaml": "id: HLD_PROPOSED_001\nname: Eventarc Cloud Storage triggers must scope events to a specific bucket\nprinciple: governance\nseverity: MEDIUM\nrationale: |\n  Cloud Storage direct-event Eventarc triggers (matching_criteria attribute\n  \"type\" equal to google.cloud.storage.object.v1.finalized) require a\n  companion matching_criteria with attribute \"bucket\" to scope which\n  bucket's notifications are delivered. Google's own Terraform\n  documentation for creating these triggers always pairs the type\n  criteria with a bucket criteria. Without it, the trigger either fails\n  Eventarc's server-side validation, or — if accepted — matches\n  object-finalized events for every bucket in the project, including\n  buckets created later and outside this module's control, silently\n  expanding the blast radius of what invokes the trigger's destination.\nremediation: |\n  Add a bucket-scoped matching_criteria block:\n\n    resource \"google_eventarc_trigger\" \"storage\" {\n      matching_criteria {\n        attribute = \"type\"\n        value     = \"google.cloud.storage.object.v1.finalized\"\n      }\n      matching_criteria {\n        attribute = \"bucket\"\n        value     = google_storage_bucket.source.name\n      }\n    }\nresources:\n  google_eventarc_trigger:\n    filter:\n      path: matching_criteria\n      any_in:\n        all:\n          - path: attribute\n            equals: \"type\"\n          - path: value\n            equals: \"google.cloud.storage.object.v1.finalized\"\n    path: matching_criteria\n    any_in:\n      path: attribute\n      equals: \"bucket\"\n"
+      "yaml": "id: HLD_PROPOSED_001\nname: Eventarc Cloud Storage triggers must scope events to a specific bucket\nprinciple: governance\nseverity: MEDIUM\nrationale: |\n  Cloud Storage direct-event Eventarc triggers (matching_criteria attribute\n  \"type\" equal to google.cloud.storage.object.v1.finalized) require a\n  companion matching_criteria with attribute \"bucket\" to scope which\n  bucket's notifications are delivered. Google's own Terraform\n  documentation for creating these triggers always pairs the type\n  criteria with a bucket criteria. Without it, the trigger either fails\n  Eventarc's server-side validation, or \u2014 if accepted \u2014 matches\n  object-finalized events for every bucket in the project, including\n  buckets created later and outside this module's control, silently\n  expanding the blast radius of what invokes the trigger's destination.\nremediation: |\n  Add a bucket-scoped matching_criteria block:\n\n    resource \"google_eventarc_trigger\" \"storage\" {\n      matching_criteria {\n        attribute = \"type\"\n        value     = \"google.cloud.storage.object.v1.finalized\"\n      }\n      matching_criteria {\n        attribute = \"bucket\"\n        value     = google_storage_bucket.source.name\n      }\n    }\nresources:\n  google_eventarc_trigger:\n    filter:\n      path: matching_criteria\n      any_in:\n        all:\n          - path: attribute\n            equals: \"type\"\n          - path: value\n            equals: \"google.cloud.storage.object.v1.finalized\"\n    path: matching_criteria\n    any_in:\n      path: attribute\n      equals: \"bucket\"\n"
     },
     {
-      "rationale": "Corresponds to HOLDEN_AI_002. google_eventarc_trigger coverage has nothing about the Cloud Storage service agent's Pub/Sub publisher grant, and no other type's coverage list overlaps (checked google_project_iam_member: only HLD_GCP_018 allUsers/allAuthenticatedUsers). This pattern is broadly applicable to any repo defining a Cloud Storage-sourced Eventarc trigger, but the existing `requires_iam_role` operator requires `sa_field`, an attribute path on the subject resource pointing at the SA email — and the Cloud Storage service agent is never referenced by any attribute on google_eventarc_trigger; it's an implicit, per-project platform identity. That needs a new primitive.",
-      "yaml": "id: HLD_PROPOSED_002\nname: Eventarc Cloud Storage triggers require the GCS service agent to hold Pub/Sub Publisher\nprinciple: identity-and-access\nseverity: HIGH\nrationale: |\n  Eventarc Standard delivers direct Cloud Storage events (object\n  finalized/archived/deleted/metadataUpdated) through an internal Pub/Sub\n  topic that Cloud Storage's own per-project service agent\n  (service-PROJECT_NUMBER@gs-project-accounts.iam.gserviceaccount.com)\n  must be allowed to publish to. Google's Terraform documentation for\n  creating these triggers requires granting that service agent\n  roles/pubsub.publisher as a named prerequisite. This grant never\n  appears as an attribute on google_eventarc_trigger itself, so there is\n  no HCL edge for a companion-resource check to follow; without it,\n  storage notifications are never delivered and the trigger sits\n  silently idle.\nremediation: |\n  Grant the Cloud Storage service agent Pub/Sub Publisher using Google's\n  documented pattern:\n\n    data \"google_storage_project_service_account\" \"gcs_account\" {}\n\n    resource \"google_project_iam_member\" \"pubsubpublisher\" {\n      project = data.google_project.project.id\n      role    = \"roles/pubsub.publisher\"\n      member  = \"serviceAccount:${data.google_storage_project_service_account.gcs_account.email_address}\"\n    }\nresources:\n  google_eventarc_trigger:\n    filter:\n      path: matching_criteria\n      any_in:\n        all:\n          - path: attribute\n            equals: \"type\"\n          - path: value\n            equals: \"google.cloud.storage.object.v1.finalized\"\n    requires_platform_agent_role:\n      member_suffix: \"@gs-project-accounts.iam.gserviceaccount.com\"\n      role: roles/pubsub.publisher\n",
+      "dsl_extension_note": "New leaf operator on resourcePolicy, e.g. `requires_platform_agent_role: {member_suffix: string, role: string}`. Same graph-scanning behavior as the existing `requires_iam_role` (scan all *_iam_member/*_iam_binding resources in the graph for a matching role grant) but instead of `sa_field` (an attribute path on the subject resource holding the SA's email \u2014 required by requires_iam_role today), it matches any grant whose `member` value, stripped of the `serviceAccount:` prefix, ends with `member_suffix`. This is needed because Google-managed per-project service agents (Cloud Storage's, Pub/Sub's, GCE's, etc.) are platform-implicit identities that never appear as an attribute value anywhere in the subject resource's own HCL \u2014 there is nothing for `sa_field` to point at \u2014 so `requires_iam_role` structurally cannot express this class of check. Pass when a qualifying grant exists anywhere in the graph; Fail when none is found; the resource-level `filter` still gates which resources the check applies to.",
+      "rationale": "Corresponds to HOLDEN_AI_002. google_eventarc_trigger coverage has nothing about the Cloud Storage service agent's Pub/Sub publisher grant, and no other type's coverage list overlaps (checked google_project_iam_member: only HLD_GCP_018 allUsers/allAuthenticatedUsers). This pattern is broadly applicable to any repo defining a Cloud Storage-sourced Eventarc trigger, but the existing `requires_iam_role` operator requires `sa_field`, an attribute path on the subject resource pointing at the SA email \u2014 and the Cloud Storage service agent is never referenced by any attribute on google_eventarc_trigger; it's an implicit, per-project platform identity. That needs a new primitive.",
       "requires_dsl_extension": true,
-      "dsl_extension_note": "New leaf operator on resourcePolicy, e.g. `requires_platform_agent_role: {member_suffix: string, role: string}`. Same graph-scanning behavior as the existing `requires_iam_role` (scan all *_iam_member/*_iam_binding resources in the graph for a matching role grant) but instead of `sa_field` (an attribute path on the subject resource holding the SA's email — required by requires_iam_role today), it matches any grant whose `member` value, stripped of the `serviceAccount:` prefix, ends with `member_suffix`. This is needed because Google-managed per-project service agents (Cloud Storage's, Pub/Sub's, GCE's, etc.) are platform-implicit identities that never appear as an attribute value anywhere in the subject resource's own HCL — there is nothing for `sa_field` to point at — so `requires_iam_role` structurally cannot express this class of check. Pass when a qualifying grant exists anywhere in the graph; Fail when none is found; the resource-level `filter` still gates which resources the check applies to."
+      "yaml": "id: HLD_PROPOSED_002\nname: Eventarc Cloud Storage triggers require the GCS service agent to hold Pub/Sub Publisher\nprinciple: identity-and-access\nseverity: HIGH\nrationale: |\n  Eventarc Standard delivers direct Cloud Storage events (object\n  finalized/archived/deleted/metadataUpdated) through an internal Pub/Sub\n  topic that Cloud Storage's own per-project service agent\n  (service-PROJECT_NUMBER@gs-project-accounts.iam.gserviceaccount.com)\n  must be allowed to publish to. Google's Terraform documentation for\n  creating these triggers requires granting that service agent\n  roles/pubsub.publisher as a named prerequisite. This grant never\n  appears as an attribute on google_eventarc_trigger itself, so there is\n  no HCL edge for a companion-resource check to follow; without it,\n  storage notifications are never delivered and the trigger sits\n  silently idle.\nremediation: |\n  Grant the Cloud Storage service agent Pub/Sub Publisher using Google's\n  documented pattern:\n\n    data \"google_storage_project_service_account\" \"gcs_account\" {}\n\n    resource \"google_project_iam_member\" \"pubsubpublisher\" {\n      project = data.google_project.project.id\n      role    = \"roles/pubsub.publisher\"\n      member  = \"serviceAccount:${data.google_storage_project_service_account.gcs_account.email_address}\"\n    }\nresources:\n  google_eventarc_trigger:\n    filter:\n      path: matching_criteria\n      any_in:\n        all:\n          - path: attribute\n            equals: \"type\"\n          - path: value\n            equals: \"google.cloud.storage.object.v1.finalized\"\n    requires_platform_agent_role:\n      member_suffix: \"@gs-project-accounts.iam.gserviceaccount.com\"\n      role: roles/pubsub.publisher\n"
     }
   ],
   "suggested_suppressions": []
